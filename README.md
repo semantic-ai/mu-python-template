@@ -1,6 +1,6 @@
 # Mu Python template
 
-Template for [mu.semte.ch](http://mu.semte.ch)-microservices written in Python3.8. Based on the [Flask](https://palletsprojects.com/p/flask/)-framework.
+Template for [mu.semte.ch](http://mu.semte.ch)-microservices written in Python3.12. Based on the [FastAPI](https://fastapi.tiangolo.com/)-framework.
 
 ## Quickstart
 
@@ -12,8 +12,13 @@ LABEL maintainer="maintainer@example.com"
 
 Create a `web.py` entrypoint-file. (naming of the entrypoint can be configured through `APP_ENTRYPOINT`)
 ```python
-@app.route("/hello")
-def hello():
+from starlette.responses import PlainTextResponse
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/hello")
+def hello() -> PlainTextResponse:
     return "Hello from the mu-python-template!"
 ```
 
@@ -36,11 +41,18 @@ curl localhost:8080/hello
 
 ### Dependencies
 
-If your service needs external libraries other than the ones already provided by the template (Flask, SPARQLWrapper and rdflib), you can specify those in a [`requirements.txt`](https://pip.pypa.io/en/stable/reference/requirements-file-format/)-file. The template will take care of installing them when you build your Docker image and when you boot the template in development mode for the first time.
+If your service needs external libraries other than the ones already provided by the template (FastAPI, uvicorn, SPARQLWrapper, rdflib, and jsonapi-pydantic), you can specify those in a [`requirements.txt`](https://pip.pypa.io/en/stable/reference/requirements-file-format/)-file. The template will take care of installing them when you build your Docker image and when you boot the template in development mode for the first time.
+
+You may find that your python dependencies may depend on C/C++ libraries which may not be present (e.g. libgeos for a package such as shapely). In order to overcome this issue, add a file build.sh which is executed before installation of python dependencies. E.g.:
+```bash
+#!/bin/sh
+
+apt update && apt install -y libgeos-dev
+```
 
 ### Development mode
 
-By leveraging Dockers' [bind-mount](https://docs.docker.com/storage/bind-mounts/), you can mount your application code into an existing service image. This spares you from building a new image to test each change. Just mount your services' folder to the containers' `/app`. On top of that, you can configure the environment variable `MODE` to `development`. That enables live-reloading of the server, so it immediately updates when you save a file.  
+By leveraging Dockers' [bind-mount](https://docs.docker.com/storage/bind-mounts/), you can mount your application code into an existing service image. This spares you from building a new image to test each change. Just mount your services' folder to the containers' `/app`. On top of that, you can configure the environment variable `MODE` to `development`. That enables live-reloading of the server, so it immediately updates when you save a file.
 
 example docker-compose parameters:
 ```yml
@@ -70,25 +82,12 @@ def log(msg, *args, **kwargs)
 ```
 
 > Write a log message to the log file.
-> 
+>
 > Works exactly the same as the logging.info (https://docs.python.org/3/library/logging.html#logging.info) method from pythons' logging module.
-> Logs are written to the /logs directory in the docker container.  
-> 
-> Note that the `helpers` module also exposes `logger`, which is the logger instance (https://docs.python.org/3/library/logging.html#logger-objects) 
+> Logs are written to the /logs directory in the docker container.
+>
+> Note that the `helpers` module also exposes `logger`, which is the logger instance (https://docs.python.org/3/library/logging.html#logger-objects)
 > used by the template. The methods provided by this instance can be used for more fine-grained logging.
-
-<a id="helpers.error"></a>
-
-#### `error`
-
-```python
-def error(msg, status=400, **kwargs)
-```
-
-> Returns a Response object containing a JSONAPI compliant error response with the given status code (400 by default).
-> 
-> Response object documentation: https://flask.palletsprojects.com/en/1.1.x/api/#response-objects
-> The kwargs can be any other key supported by JSONAPI error objects: https://jsonapi.org/format/#error-objects
 
 <a id="helpers.session_id_header"></a>
 
@@ -135,21 +134,27 @@ def validate_resource_type(expected_type, data)
 #### `query`
 
 ```python
-def query(the_query)
+def query(the_query, sudo = False, scope = None )
 ```
 
 > Execute the given SPARQL query (select/ask/construct) on the triplestore and returns the results in the given return Format (JSON by default).
-
+>
+> Advanced options:
+> - sudo: perform a sudo query, ignoring the groups of the originating, note that you are only allowed to make sudo queries if the environment variable `ALLOW_MU_AUTH_SUDO` is set to `true` (or `True` or `yes`)
+> - scope: a scope string to use when executing this query. If left as None, the default scope of `DEFAULT_MU_AUTH_SCOPE` is used if any. Otherwise, no scope is used in the query
 <a id="helpers.update"></a>
 
 #### `update`
 
 ```python
-def update(the_query)
+def update(the_query, sudo = False, scope = None)
 ```
 
 > Execute the given update SPARQL query on the triplestore. If the given query is not an update query, nothing happens.
-
+>
+> Advanced options:
+> - sudo: perform a sudo query, ignoring the groups of the originating request, note that you are only allowed to make sudo queries if the environment variable `ALLOW_MU_AUTH_SUDO` is set to `true` (or `True` or `yes`)
+> - scope: a scope string to use when executing this query. If left as None, the default scope of `DEFAULT_MU_AUTH_SCOPE` is used if any. Otherwise, no scope is used in the query
 <a id="helpers.update_modified"></a>
 
 #### `update_modified`
@@ -249,12 +254,12 @@ def sparql_escape_uri(obj)
 def sparql_escape(obj)
 ```
 
-> Converts the given object to a SPARQL-safe RDF object string with the right RDF-datatype. 
-> 
+> Converts the given object to a SPARQL-safe RDF object string with the right RDF-datatype.
+>
 > These functions should be used especially when inserting user-input to avoid SPARQL-injection.
 > Separate functions are available for different python datatypes.
 > The `sparql_escape` function however can automatically select the right method to use, for the following Python datatypes:
-> 
+>
 > - `str`
 > - `int`
 > - `float`
@@ -262,8 +267,34 @@ def sparql_escape(obj)
 > - `datetime.date`
 > - `datetime.time`
 > - `boolean`
-> 
+>
 > The `sparql_escape_uri`-function can be used for escaping URI's.
+
+### Waiting for system ready
+
+Full functionality for waiting for the system to be stable and ready (database up, triplestore ready, migrations ran, ...) is being planned as a cross-template feature, but not ready at the moment. While waiting for this functionality to arrive in the template, one can add a custom function that does a much more simplistic check like this
+
+```python
+def wait_for_triplestore():
+    triplestore_live = False
+    log("Waiting for triplestore...")
+    while not triplestore_live:
+        try:
+            result = query(
+                """
+                SELECT ?s WHERE {
+                ?s ?p ?o.
+                } LIMIT 1""",
+            )
+            if result["results"]["bindings"][0]["s"]["value"]:
+                triplestore_live = True
+            else:
+                raise Exception("triplestore not ready yet...")
+        except Exception as _e:
+            log("Triplestore not live yet, retrying...")
+            time.sleep(1)
+    log("Triplestore ready!")
+```
 
 ### Writing SPARQL Queries
 
@@ -287,6 +318,19 @@ WHERE {
 """)
 query_string = query_template.substitute(person=sparql_escape_uri(my_person))
 query_result = query(query_string)
+```
+
+### Functions on startup
+Because of the way FastApi works, logic that should be run on startup should always be wrapped with an `@app.on_evente("startup")` decorator. For instance:
+
+```py
+@app.on_event("startup")
+async def startup_event():
+    wait_for_triplestore()
+    # on startup fail existing busy tasks
+    fail_busy_and_scheduled_tasks()
+    # on startup also immediately start scheduled tasks
+    process_open_tasks()
 ```
 
 ## Deployment
@@ -327,17 +371,12 @@ my-python:
 
 The string "true", ignoring casing, is considered `True`.  All other values are considered `False`.
 
-#### Meinheld Gunicorn Docker Variables
-Since this template is based on the meinheld-gunicorn-docker image, all possible environment config for that image is also available for the template. See [meinheld-gunicorn-docker#environment-variables](https://github.com/tiangolo/meinheld-gunicorn-docker#environment-variables) for more info. The template configures `WEB_CONCURRENCY` in particular to `1` by default.
-
-### Production
-
-For hosting the app in a production setting, the template depends on [meinheld-gunicorn-docker](https://github.com/tiangolo/meinheld-gunicorn-docker). All [environment variables](https://github.com/tiangolo/meinheld-gunicorn-docker#environment-variables) used by meinheld-gunicorn can be used to configure your service as well.
-
 ## Other
 
 ### Reassigning `app`
-In regular Flask applications (e.g. those not run within this template) you are required to define `app` by using `app = Flask(__name__)` or similar. This does *not* need to be done in your web.py, as this is handled by the microservice architecture/template. Redefining this may cause `The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.` to be thrown on your routes, which can be luckily be fixed by simply removing the previously mentioned `app = ...` line.
+In regular FastAPI applications (e.g. those not run within this template) you are required to define `app` by using `app = FastAPI()` or similar. This does *not* need to be done in your web.py, as this is handled by the microservice architecture/template. Redefining this may cause `The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.` to be thrown on your routes, which can be luckily be fixed by simply removing the previously mentioned `app = ...` line.
+
+If you do not like this behavior (because e.g. your IDE does not find the app variable), it is possible (as is documented in this readme) to define an APIRouter object in your web.py file. It will be automatically picked up by the template. In this scenario, do not override the app variable as it could lead to the same error as before.
 
 ### readme.py
 To simplify documenting the helper functions, `README.py` can be used to import & render the docstrings into README.md.
@@ -347,3 +386,53 @@ python3 -m pip install pydoc-markdown
 python3 README.py
 ```
 You can customise the output through the API configuration! See [README.py](README.py) && the [pydoc-markdown docs](https://niklasrosenstein.github.io/pydoc-markdown/).
+
+## Migrate from Flask based versions
+Previous versions of this template were based on Flask. Effort was made to keep as much backward compatible as possible.
+However, some things were slightly modified or require your attention
+
+### Defining routes
+Flask uses an `@app.route` syntax, FastAPI provides several functions on the annotator object based on the HTTP method (`@api.get`, `@api.route`). You may need to update this in your code
+
+### Typing
+FastAPI heavily uses type annotations to determine what goes in and out of your API. If the return type is not specified, a JSONResponse is assumed and returning e.g. a string will result in an error. It is highly recommended to use type annotations and pydantic as much as possible to define request / response models. More information: https://fastapi.tiangolo.com/features/#pydantic-features
+
+### Error handling
+Error handling in FastAPI is much more involved (read about it [here](https://fastapi.tiangolo.com/tutorial/handling-errors/)).
+The `helpers.error` function was kept for backward compatibility but we encourage you to simple raise exceptions (more specifically the BaseHTTPException which is automatically injected by the template)
+```python
+from starlette.responses import PlainTextResponse
+from fastapi import APIRouter
+
+router = APIRouter()
+@router.get("/hello")
+def hello() -> PlainTextResponse:
+    raise BaseHTTPException(detail="test")
+```
+Advanced scenarios are possible, you can introduce your own Exception hierarchy, and insert specific handlers for them through the app variable:
+```python
+class UnicornException(Exception):
+    def __init__(self, name: str):
+        self.name = name
+
+@app.exception_handler(UnicornException)
+def unicorn_exception_handler(request: Request, exc: UnicornException):
+    return JSONResponse(
+        status_code=418,
+        content={"message": f"Oops! {exc.name} did something."},
+    )
+
+@app.get("/hello/{name}")
+def hello(name: str) -> PlainTextResponse:
+    raise UnicornException(name=name)
+```
+
+### Asynchronous request handlers
+Unless you know what you are doing, methods annotated with @app or any router you declared (which then become web routes) should
+always be declared as synchronous methods (no async in front!). This might make your service blocking
+on computationally demanding requests.
+
+More information [here](https://fastapi.tiangolo.com/async/#in-a-hurry)
+
+### Startup functions
+Be sure to wrap your startup functions with a `@app.on_event("startup")` decorator
